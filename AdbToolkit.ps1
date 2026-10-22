@@ -297,6 +297,59 @@ function Install-Aab([string]$Aab) {
     }
 }
 
+# Имя пакета для OBB, у которых оно не читается из имени файла. '' - спрашивать не нужно, $null - пользователь отказался.
+function Resolve-ObbPackage([string[]]$Files) {
+    if (@($Files | Where-Object { -not (Get-ObbPackage $_) }).Count -eq 0) { return '' }
+    $pkg = [Microsoft.VisualBasic.Interaction]::InputBox('Имя OBB не похоже на main.<версия>.<пакет>.obb. Введите имя пакета приложения:', 'Пакет для OBB', '')
+    if (-not $pkg.Trim()) { Write-Log 'Отменено.' $script:ColDim; return $null }
+    return $pkg.Trim()
+}
+
+# Разбирает перетащенные файлы по расширениям и решает, что с ними делать.
+function Get-DropPlan([string[]]$Paths) {
+    $plan = [pscustomobject]@{ Apks = @(); Obbs = @(); Aabs = @(); Ignored = @(); Error = $null }
+    foreach ($p in $Paths) {
+        $ext = [System.IO.Path]::GetExtension($p).ToLowerInvariant()
+        if (Test-Path -LiteralPath $p -PathType Container) { $plan.Ignored += $p }
+        elseif ($ext -eq '.apk') { $plan.Apks += $p }
+        elseif ($ext -eq '.obb') { $plan.Obbs += $p }
+        elseif ($ext -eq '.aab') { $plan.Aabs += $p }
+        else { $plan.Ignored += $p }
+    }
+    if ($plan.Aabs.Count -gt 1) {
+        $plan.Error = 'Перетащено несколько AAB: ставьте их по одному.'
+    } elseif ($plan.Aabs.Count -gt 0 -and $plan.Apks.Count -gt 0) {
+        $plan.Error = 'AAB и APK вместе: непонятно, что ставить. Перетащите что-то одно (OBB можно добавить к любому).'
+    } elseif ($plan.Aabs.Count + $plan.Apks.Count + $plan.Obbs.Count -eq 0) {
+        $plan.Error = 'Среди файлов нет APK, OBB или AAB.'
+    }
+    return $plan
+}
+
+# AAB или APK ставятся, OBB копируются после установки. Только OBB: приложение уже должно стоять на планшете.
+function Install-Dropped([string[]]$Paths) {
+    $plan = Get-DropPlan $Paths
+    foreach ($i in $plan.Ignored) { Write-Log "Пропущено (не APK, OBB и не AAB): $i" $script:ColWarn }
+    if ($plan.Error) { Write-Log $plan.Error $script:ColErr; return }
+    $fallback = ''
+    if ($plan.Obbs.Count -gt 0) {
+        $fallback = Resolve-ObbPackage $plan.Obbs
+        if ($null -eq $fallback) { return }
+    }
+    foreach ($f in $plan.Aabs) {
+        Write-Log "AAB: $([System.IO.Path]::GetFileName($f))" $script:ColHead
+        if (-not (Install-Aab $f)) { return }
+    }
+    foreach ($f in $plan.Apks) {
+        Write-Log "APK: $([System.IO.Path]::GetFileName($f))" $script:ColHead
+        if (-not (Install-Apk $f)) { return }
+    }
+    if ($plan.Obbs.Count -gt 0) {
+        if ($plan.Aabs.Count + $plan.Apks.Count -eq 0) { Write-Log 'APK не передан: копирую только OBB, приложение должно уже стоять на планшете.' $script:ColWarn }
+        $null = Send-Obb $plan.Obbs $fallback
+    }
+}
+
 # ---------------------------------------------------------------- команды
 
 $script:Commands = @(
@@ -565,12 +618,8 @@ $script:Commands = @(
            if ($apk.Count -eq 0) { return }
            $obb = @(Select-Files 'OBB-файлы (можно несколько)' 'OBB|*.obb|Все файлы|*.*' -Multi)
            if ($obb.Count -eq 0) { return }
-           $fallback = ''
-           if (@($obb | Where-Object { -not (Get-ObbPackage $_) }).Count -gt 0) {
-               $fallback = [Microsoft.VisualBasic.Interaction]::InputBox('Имя OBB не похоже на main.<версия>.<пакет>.obb. Введите имя пакета приложения:', 'Пакет для OBB', '')
-               if (-not $fallback.Trim()) { Write-Log 'Отменено.' $script:ColDim; return }
-               $fallback = $fallback.Trim()
-           }
+           $fallback = Resolve-ObbPackage $obb
+           if ($null -eq $fallback) { return }
            if (Install-Apk $apk[0]) { $null = Send-Obb $obb $fallback }
        } }
     @{ Group = 'Установка приложений'
@@ -599,6 +648,19 @@ if ($SelfTest) {
         $got = Get-ObbPackage $k
         $ok = ($got -eq $obbCases[$k])
         Write-Host ("Get-ObbPackage '{0}' -> '{1}': {2}" -f $k, $got, $(if ($ok) { 'OK' } else { 'FAIL' }))
+    }
+    $dropCases = @(
+        @{ Paths = @('a.apk', 'b.OBB');        Apks = 1; Obbs = 1; Aabs = 0; Err = $false }
+        @{ Paths = @('x.aab', 'main.1.a.b.obb'); Apks = 0; Obbs = 1; Aabs = 1; Err = $false }
+        @{ Paths = @('only.obb');              Apks = 0; Obbs = 1; Aabs = 0; Err = $false }
+        @{ Paths = @('x.aab', 'y.apk');        Apks = 1; Obbs = 0; Aabs = 1; Err = $true }
+        @{ Paths = @('x.aab', 'y.aab');        Apks = 0; Obbs = 0; Aabs = 2; Err = $true }
+        @{ Paths = @('notes.txt');             Apks = 0; Obbs = 0; Aabs = 0; Err = $true }
+    )
+    foreach ($dc in $dropCases) {
+        $pl = Get-DropPlan $dc.Paths
+        $ok = ($pl.Apks.Count -eq $dc.Apks -and $pl.Obbs.Count -eq $dc.Obbs -and $pl.Aabs.Count -eq $dc.Aabs -and ([bool]$pl.Error) -eq $dc.Err)
+        Write-Host ("Get-DropPlan {0}: {1}" -f ($dc.Paths -join ', '), $(if ($ok) { 'OK' } else { 'FAIL' }))
     }
     Write-Host ("java: {0}; bundletool: {1}" -f (Find-Java), (Find-Bundletool))
     $script:Adb = Find-Adb
@@ -691,6 +753,19 @@ $cmdPanel = New-Object System.Windows.Forms.Panel
 $cmdPanel.Dock = 'Fill'; $cmdPanel.AutoScroll = $true
 $split.Panel1.Controls.Add($cmdPanel)
 
+# область, куда перетаскивают APK / OBB / AAB (размещается в разделе «Установка приложений», см. цикл строк команд)
+$script:ZoneColor = [System.Drawing.Color]::FromArgb(244, 248, 253)
+$script:ZoneHot   = [System.Drawing.Color]::FromArgb(205, 228, 255)
+$zone = New-Object System.Windows.Forms.Label
+$zone.AllowDrop = $true
+$zone.Text = "Перетащите сюда APK, OBB или AAB: утилита сама поймёт, как их установить`r`n(или нажмите и выберите файлы)"
+$zone.TextAlign = 'MiddleCenter'
+$zone.BorderStyle = 'FixedSingle'
+$zone.BackColor = $script:ZoneColor
+$zone.ForeColor = [System.Drawing.Color]::FromArgb(30, 60, 110)
+$zone.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+$zone.Cursor = [System.Windows.Forms.Cursors]::Hand
+
 $outHeader = New-Object System.Windows.Forms.Panel
 $outHeader.Dock = 'Top'; $outHeader.Height = 34
 $btnClear = New-Object System.Windows.Forms.Button
@@ -732,6 +807,14 @@ foreach ($c in $script:Commands) {
         $cmdPanel.Controls.Add($h)
         $y += 32
         $lastGroup = $c.Group
+        if ($c.Group -eq 'Установка приложений') {
+            # область перетаскивания лежит в начале этого раздела
+            $zone.Location = New-Object System.Drawing.Point(6, $y)
+            $zone.Size = New-Object System.Drawing.Size($rowWidth, 70)
+            $zone.Anchor = 'Top,Left,Right'
+            $cmdPanel.Controls.Add($zone)
+            $y += 78
+        }
     }
     $b = New-Object System.Windows.Forms.Button
     $b.Text = $c.Title
@@ -832,6 +915,21 @@ function Invoke-Command-Button($c) {
     }
 }
 
+function Invoke-Drop([string[]]$Paths) {
+    if ($script:Busy) { Write-Log 'Дождитесь окончания текущей операции.' $script:ColWarn; return }
+    Set-Busy $true
+    try {
+        Write-Log '=== Установка перетащенных файлов ===' $script:ColHead
+        Install-Dropped $Paths
+        Write-Log ''
+    } catch {
+        Write-Log ('Ошибка: ' + $_.Exception.Message) $script:ColErr
+    } finally {
+        Set-Busy $false
+        Update-DeviceList
+    }
+}
+
 function Split-CommandLine([string]$Line) {
     $tokens = @()
     foreach ($m in [regex]::Matches($Line, '"([^"]*)"|(\S+)')) {
@@ -861,6 +959,37 @@ $cmbDev.Add_SelectedIndexChanged({
     $i = $cmbDev.SelectedIndex
     if ($i -ge 0 -and $i -lt $script:Devices.Count) { $script:Serial = $script:Devices[$i].Serial }
     Update-StateLabel
+})
+# Установку запускаем не из самого обработчика drop: пока он не вернулся, Проводник держит перетаскивание.
+$script:DropFiles = @()
+$dropTimer = New-Object System.Windows.Forms.Timer
+$dropTimer.Interval = 50
+$dropTimer.Add_Tick({
+    $dropTimer.Stop()
+    $files = @($script:DropFiles)
+    $script:DropFiles = @()
+    Invoke-Drop $files
+})
+$zone.Add_DragEnter({
+    param($s, $e)
+    if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+        $zone.BackColor = $script:ZoneHot
+    } else {
+        $e.Effect = [System.Windows.Forms.DragDropEffects]::None
+    }
+})
+$zone.Add_DragLeave({ $zone.BackColor = $script:ZoneColor })
+$zone.Add_DragDrop({
+    param($s, $e)
+    $zone.BackColor = $script:ZoneColor
+    $script:DropFiles = @($e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
+    $dropTimer.Start()
+})
+$zone.Add_Click({
+    if ($script:Busy) { return }
+    $files = @(Select-Files 'APK, OBB или AAB' 'APK, OBB, AAB|*.apk;*.obb;*.aab|Все файлы|*.*' -Multi)
+    if ($files.Count -gt 0) { Invoke-Drop $files }
 })
 $btnRefresh.Add_Click({ Update-DeviceList -Force })
 $btnClear.Add_Click({ $rtb.Clear() })
