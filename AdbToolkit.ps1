@@ -162,6 +162,141 @@ function Get-WindowsPortable {
     return $result
 }
 
+# ---------------------------------------------------------------- установка приложений
+
+$script:Bundletool = $null
+
+# Диалог выбора файлов. При отмене ничего не возвращает: вызывать как @(Select-Files ...) и проверять Count.
+function Select-Files([string]$Title, [string]$Filter, [switch]$Multi) {
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = $Title
+    $dlg.Filter = $Filter
+    $dlg.Multiselect = [bool]$Multi
+    if ($dlg.ShowDialog() -ne 'OK') { Write-Log 'Отменено.' $script:ColDim; return }
+    return @($dlg.FileNames)
+}
+
+# Имя пакета из имени OBB: main.<версия>.<пакет>.obb или patch.<версия>.<пакет>.obb.
+function Get-ObbPackage([string]$FileName) {
+    $m = [regex]::Match([System.IO.Path]::GetFileName($FileName), '^(?:main|patch)\.\d+\.(?<pkg>[A-Za-z]\w*(?:\.\w+)+)\.obb$')
+    if ($m.Success) { return $m.Groups['pkg'].Value }
+    return $null
+}
+
+function Write-InstallHint([string]$Text) {
+    if ($Text -match 'INSTALL_FAILED_UPDATE_INCOMPATIBLE|INSTALL_FAILED_SHARED_USER_INCOMPATIBLE') {
+        Write-Log 'Подсказка: на планшете стоит это приложение с другой подписью. Удалите его (adb uninstall <пакет>) и повторите.' $script:ColWarn
+    } elseif ($Text -match 'INSTALL_FAILED_VERSION_DOWNGRADE') {
+        Write-Log 'Подсказка: на планшете версия новее. Удалите её (adb uninstall <пакет>) или ставьте более новую сборку.' $script:ColWarn
+    } elseif ($Text -match 'INSTALL_FAILED_INSUFFICIENT_STORAGE') {
+        Write-Log 'Подсказка: на планшете не хватает места.' $script:ColWarn
+    } elseif ($Text -match 'INSTALL_FAILED_OLDER_SDK|INSTALL_FAILED_NO_MATCHING_ABIS|INSTALL_FAILED_DEPRECATED_SDK_VERSION') {
+        Write-Log 'Подсказка: сборка не подходит этому планшету (версия Android или архитектура процессора).' $script:ColWarn
+    } elseif ($Text -match 'USER_RESTRICTED|canceled by user|INSTALL_FAILED_ABORTED') {
+        Write-Log 'Подсказка: установку блокирует планшет. Посмотрите на его экран и подтвердите установку; на Samsung отключите «Auto Blocker» в Настройки → Безопасность и конфиденциальность.' $script:ColWarn
+    }
+}
+
+function Install-Apk([string]$Path) {
+    $r = Invoke-Adb @('install', '-r', '-t', $Path) -Timeout 900
+    if ($r -and $r.Code -eq 0 -and $r.Out -match 'Success') {
+        Write-Log 'APK установлен.' $script:ColOk
+        return $true
+    }
+    Write-Log 'Установить APK не удалось.' $script:ColErr
+    if ($r) { Write-InstallHint "$($r.Out) $($r.Err)" }
+    return $false
+}
+
+# Копирует OBB в /sdcard/Android/obb/<пакет>/. Пакет берётся из имени файла, иначе из $FallbackPackage.
+function Send-Obb([string[]]$Files, [string]$FallbackPackage) {
+    foreach ($f in $Files) {
+        $pkg = Get-ObbPackage $f
+        if (-not $pkg) { $pkg = $FallbackPackage }
+        $name = [System.IO.Path]::GetFileName($f)
+        $dir = "/sdcard/Android/obb/$pkg"
+        $r = Invoke-Adb @('shell', 'mkdir', '-p', $dir)
+        if (-not $r -or $r.Code -ne 0) { Write-Log 'Не удалось создать папку для OBB на планшете.' $script:ColErr; return $false }
+        $r = Invoke-Adb @('push', $f, "$dir/$name") -Timeout 1800
+        if (-not $r -or $r.Code -ne 0) { Write-Log "OBB не скопирован: $name" $script:ColErr; return $false }
+    }
+    Write-Log 'OBB скопирован.' $script:ColOk
+    return $true
+}
+
+function Find-Java {
+    if ($env:JAVA_HOME) {
+        $p = Join-Path $env:JAVA_HOME 'bin\java.exe'
+        if (Test-Path $p) { return $p }
+    }
+    $cmd = Get-Command java.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+function Find-Bundletool {
+    foreach ($d in @($PSScriptRoot, (Join-Path $PSScriptRoot 'tools'), (Join-Path $PSScriptRoot 'platform-tools'))) {
+        if (-not (Test-Path $d)) { continue }
+        $f = Get-ChildItem -Path $d -Filter 'bundletool*.jar' -File -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+        if ($f) { return $f.FullName }
+    }
+    return $null
+}
+
+# Запускает внешнюю программу и пишет её вывод в журнал.
+function Invoke-Logged([string]$File, [string[]]$ArgList, [int]$Timeout) {
+    $argString = Join-Args $ArgList
+    Write-Log "> $(Split-Path $File -Leaf) $argString" $script:ColHead
+    $r = Invoke-Native $File $argString $Timeout
+    if ($r.Out) { Write-Log $r.Out }
+    if ($r.Err) {
+        $c = $script:ColDim
+        if ($r.Code -ne 0) { $c = $script:ColErr }
+        Write-Log $r.Err $c
+    }
+    if ($r.TimedOut) { Write-Log ("Команда не завершилась за {0} с и была прервана." -f $Timeout) $script:ColWarn }
+    return $r
+}
+
+# AAB ставится через bundletool: он собирает из бандла APK под выбранное устройство и устанавливает их.
+function Install-Aab([string]$Aab) {
+    if (-not $script:Adb) { Write-Log 'adb.exe не найден. Укажите путь к нему сверху.' $script:ColErr; return $false }
+    if (-not $script:Serial) { Write-Log 'Сначала выберите устройство в списке сверху.' $script:ColWarn; return $false }
+    $java = Find-Java
+    if (-not $java) {
+        Write-Log 'Java не найдена: bundletool работает на Java. Установите JRE или JDK 17+ (например, Temurin) и перезапустите утилиту.' $script:ColErr
+        return $false
+    }
+    if (-not $script:Bundletool -or -not (Test-Path $script:Bundletool)) { $script:Bundletool = Find-Bundletool }
+    if (-not $script:Bundletool) {
+        Write-Log 'bundletool.jar не найден рядом с утилитой (его можно скачать на github.com/google/bundletool/releases). Укажите файл.' $script:ColWarn
+        $f = @(Select-Files 'Укажите bundletool.jar' 'bundletool|*.jar|Все файлы|*.*')
+        if ($f.Count -eq 0) { return $false }
+        $script:Bundletool = $f[0]
+    }
+    if (-not (Test-Path (Join-Path $env:USERPROFILE '.android\debug.keystore'))) {
+        Write-Log 'Не найден ~/.android/debug.keystore: bundletool не сможет подписать APK, и установка, скорее всего, не пройдёт.' $script:ColWarn
+    }
+    if (-not $script:ServerUp) { Start-AdbServer }
+
+    $apks = Join-Path ([System.IO.Path]::GetTempPath()) ('adbtoolkit_{0}.apks' -f [guid]::NewGuid().ToString('N'))
+    $common = @("--device-id=$($script:Serial)", "--adb=$($script:Adb)")
+    try {
+        $r = Invoke-Logged $java (@('-jar', $script:Bundletool, 'build-apks', "--bundle=$Aab", "--output=$apks", '--connected-device') + $common) 600
+        if ($r.Code -ne 0) { Write-Log 'Не удалось собрать APK из AAB.' $script:ColErr; return $false }
+        $r = Invoke-Logged $java (@('-jar', $script:Bundletool, 'install-apks', "--apks=$apks") + $common) 600
+        if ($r.Code -eq 0) {
+            Write-Log 'AAB установлен.' $script:ColOk
+            return $true
+        }
+        Write-Log 'Установить AAB не удалось.' $script:ColErr
+        Write-InstallHint "$($r.Out) $($r.Err)"
+        return $false
+    } finally {
+        Remove-Item $apks -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------------------------------------------------------------- команды
 
 $script:Commands = @(
@@ -410,12 +545,62 @@ $script:Commands = @(
            if ($dlg.ShowDialog() -ne 'OK') { Write-Log 'Отменено.' $script:ColDim; return }
            $null = Invoke-Adb @('push', $dlg.FileName, '/sdcard/Download/') -Timeout 900
        } }
+
+    # ---------------- Установка приложений
+    @{ Group = 'Установка приложений'
+       Title = 'Установить APK…'
+       Desc  = 'Устанавливает выбранный APK на планшет. Если приложение уже есть, обновляет его с сохранением данных.'
+       Cmd   = 'adb install -r -t <файл.apk>'
+       Run   = {
+           $apk = @(Select-Files 'APK для установки' 'APK|*.apk|Все файлы|*.*')
+           if ($apk.Count -eq 0) { return }
+           $null = Install-Apk $apk[0]
+       } }
+    @{ Group = 'Установка приложений'
+       Title = 'Установить APK + OBB…'
+       Desc  = 'Ставит APK и копирует файлы OBB (кэш игры) в /sdcard/Android/obb/<пакет>/. Пакет берётся из имени OBB: main.<версия>.<пакет>.obb.'
+       Cmd   = 'adb install -r -t <apk>; adb push <obb> /sdcard/Android/obb/<пакет>/'
+       Run   = {
+           $apk = @(Select-Files 'APK для установки' 'APK|*.apk|Все файлы|*.*')
+           if ($apk.Count -eq 0) { return }
+           $obb = @(Select-Files 'OBB-файлы (можно несколько)' 'OBB|*.obb|Все файлы|*.*' -Multi)
+           if ($obb.Count -eq 0) { return }
+           $fallback = ''
+           if (@($obb | Where-Object { -not (Get-ObbPackage $_) }).Count -gt 0) {
+               $fallback = [Microsoft.VisualBasic.Interaction]::InputBox('Имя OBB не похоже на main.<версия>.<пакет>.obb. Введите имя пакета приложения:', 'Пакет для OBB', '')
+               if (-not $fallback.Trim()) { Write-Log 'Отменено.' $script:ColDim; return }
+               $fallback = $fallback.Trim()
+           }
+           if (Install-Apk $apk[0]) { $null = Send-Obb $obb $fallback }
+       } }
+    @{ Group = 'Установка приложений'
+       Title = 'Установить AAB…'
+       Desc  = 'Собирает из AAB APK под этот планшет и ставит их через bundletool. Нужны Java и bundletool.jar (положите рядом с утилитой или укажите при запросе).'
+       Cmd   = 'bundletool build-apks --connected-device; bundletool install-apks'
+       Run   = {
+           $aab = @(Select-Files 'AAB для установки' 'AAB|*.aab|Все файлы|*.*')
+           if ($aab.Count -eq 0) { return }
+           $null = Install-Aab $aab[0]
+       } }
 )
 
 # ---------------------------------------------------------------- автотест без окна
 
 if ($SelfTest) {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $obbCases = [ordered]@{
+        'main.123.com.foo.bar.obb' = 'com.foo.bar'
+        'patch.5.com.x_y.z1.obb'   = 'com.x_y.z1'
+        'C:\dl\main.7.org.a.b.obb' = 'org.a.b'
+        'game.obb'                 = $null
+        'main.1.nopkg.obb'         = $null
+    }
+    foreach ($k in $obbCases.Keys) {
+        $got = Get-ObbPackage $k
+        $ok = ($got -eq $obbCases[$k])
+        Write-Host ("Get-ObbPackage '{0}' -> '{1}': {2}" -f $k, $got, $(if ($ok) { 'OK' } else { 'FAIL' }))
+    }
+    Write-Host ("java: {0}; bundletool: {1}" -f (Find-Java), (Find-Bundletool))
     $script:Adb = Find-Adb
     Write-Host "adb: $script:Adb"
     $script:Devices = @(Get-AdbDevices)
