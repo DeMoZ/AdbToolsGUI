@@ -1,0 +1,40 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build .app and .dmg
+        run: scripts/build-macos.sh
+      - name: Pack the Windows version
+        # Windows-версия — PowerShell-скрипт с запуском через .bat, как в релизе v0.1.0
+        run: zip -j dist/AdbToolkit-Windows.zip AdbToolkit.ps1 AdbToolkit.bat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ADB-Toolkit
+          path: |
+            dist/ADB-Toolkit-macOS.dmg
+            dist/AdbToolkit-Windows.zip
+      - name: Create the release with both versions
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp dist/ADB-Toolkit-macOS.dmg "dist/ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg"
+          cp dist/AdbToolkit-Windows.zip "dist/AdbToolkit-Windows-$GITHUB_REF_NAME.zip"
+          gh release create "$GITHUB_REF_NAME" --title "ADB Toolkit $GITHUB_REF_NAME" --generate-notes \
+            "dist/ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg" "dist/AdbToolkit-Windows-$GITHUB_REF_NAME.zip"

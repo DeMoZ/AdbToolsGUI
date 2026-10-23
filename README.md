@@ -8,6 +8,7 @@
 
 - **macOS (и кроссплатформенная основа)** — Python + Tkinter, папка [`adbtoolkit/`](adbtoolkit).
 - **Windows** — PowerShell + WinForms: [`AdbToolkit.ps1`](AdbToolkit.ps1), запуск через [`AdbToolkit.bat`](AdbToolkit.bat).
+  В релизах это архив `AdbToolkit-Windows-<версия>.zip`: распакуйте и запустите `AdbToolkit.bat`.
 
 ## macOS
 
@@ -70,8 +71,8 @@ python3 -m adbtoolkit --selftest
 scripts/build-macos.sh
 ```
 
-Результат в `dist/`. То же самое делает GitHub Actions ([`build-macos.yml`](.github/workflows/build-macos.yml)) на каждый
-PR и push в `main`; на тег `v*` dmg прикрепляется к релизу.
+Результат в `dist/`. То же самое делает GitHub Actions ([`build.yml`](.github/workflows/build.yml)) на каждый
+PR и push в `main`; на тег `v*` создаётся релиз с `.dmg` для Mac и `.zip` для Windows.
 
 ### Чем Mac отличается от Windows
 
