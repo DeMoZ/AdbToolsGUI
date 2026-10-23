@@ -34,28 +34,34 @@
 `adb push` в `/sdcard/Android/obb/<пакет>/`, пакет берётся из имени `main.<версия>.<пакет>.obb`; AAB: через `bundletool`
 `build-apks --connected-device` + `install-apks`, нужны Java и `bundletool.jar` рядом со скриптом).
 
-## Задача: версия для macOS
+## Версия для macOS (Python + Tkinter)
 
-Пользователь будет развивать кроссплатформенную версию на Mac. Стек пока не выбран. Обсуждались:
-Python + Tkinter (PyInstaller), Electron, нативный Swift. Выбор за пользователем, спроси перед стартом, если он не
-сказал.
+Стек выбран: Python 3.10+ и Tkinter, перетаскивание через `tkinterdnd2` (без него зона установки работает по
+щелчку). Код в [adbtoolkit/](adbtoolkit), описание для пользователя в [README.md](README.md).
 
-Что учесть:
-- **Блок «Сторона Windows» на Mac не переносится**: `Get-PnpDevice`, `Shell.Application`, `pnputil`, проводник.
-  Его можно заменить на проверки macOS (например `system_profiler SPUSBDataType`), но это отдельное решение.
-- **macOS не умеет MTP.** Файлы планшета удобнее смотреть через «Файлы через ADB» (`adb pull` / `adb push`) или
-  сторонние программы (OpenMTP, Android File Transfer). В кроссплатформенной версии стоит сделать просмотр папок
-  планшета через `adb shell ls`.
-- Где искать `adb` на Mac: `PATH`, `/opt/homebrew/bin/adb`, `/usr/local/bin/adb`,
-  `~/Library/Android/sdk/platform-tools/adb`. Установка: `brew install android-platform-tools`.
-- Сборка `.app` / `.dmg`: на Windows её не сделать. Используйте GitHub Actions с раннером `macos-latest`.
-  Неподписанное приложение Gatekeeper блокирует, нужны инструкция «открыть через правый клик» или подпись.
-- Эту же кодовую базу разумно сделать и под Windows, чтобы поддерживать одну версию.
+- `core.py` — поиск adb / Java / bundletool, запуск программ (`Adb.run`: таймаут, прерывание), разбор
+  `adb devices -l` и `ls -la`, установка APK / OBB / AAB (`drop_plan`, `install_planned`). Без Tk.
+- `commands.py` — список команд `COMMANDS`, источник правды (как `$script:Commands`). У команды `run(adb, args)`
+  выполняется в рабочем потоке; диалоги (выбор файлов, вопросы) — только в `prepare(ui)` до запуска, в потоке их
+  вызывать нельзя. `action(ui)` — действие только в окне.
+- `macos.py` — `system_profiler SPUSBHostDataType` (старые macOS: `SPUSBDataType`) и поиск OpenMTP.
+- `gui.py` — окно; `filebrowser.py` — «Файлы планшета» через `adb shell ls -la` + pull / push.
+- Журнал и список устройств идут из потоков в окно через очередь. Фоновый опрос `adb devices` раз в 3 с идёт отдельным
+  экземпляром `Adb` и пропускается, пока выполняется команда (`job_lock`).
+- Проверки: `python3 -m unittest discover -s tests -t .` и `python3 -m adbtoolkit --selftest`.
+- Сборка: `scripts/build-macos.sh` (PyInstaller → `dist/ADB Toolkit.app` и `.dmg`), в CI —
+  `.github/workflows/build-macos.yml` на `macos-latest` (arm64). Приложение не подписано: в README инструкция
+  для Gatekeeper.
+- Приложение из Finder получает короткий `PATH` без Homebrew, поэтому пути к adb / Java / bundletool перечислены явно.
+  `/usr/bin/java` на Mac — заглушка без JDK, Java ищется через `/usr/libexec/java_home`.
+- Блок «Сторона Windows» в Python-версию не перенесён: на Windows пока работает `AdbToolkit.ps1`. Остальной код
+  кроссплатформенный (пути adb для Windows, `CREATE_NO_WINDOW`), но на Windows не проверялся.
+- Тексты интерфейса на русском; при правке команд меняйте их в обеих версиях, если команда общая.
 
 ## Технические грабли (уже наступили, не повторяй)
 
 - **`adb start-server` зависает при перехвате вывода.** Демон наследует каналы stdout/stderr, и чтение вывода
-  не завершается. Запускай сервер с перенаправлением в null (в Windows-версии через
+  не завершается. Запускай сервер с перенаправлением в null (в Python-версии `start_server` с выводом в `DEVNULL`, в Windows-версии через
   `cmd /c ""adb" start-server >nul 2>&1"`) и только потом выполняй остальные команды adb.
 - **Команды с `|` и `grep` на устройстве передавай одним аргументом** в `adb shell "..."`, внутри одинарные кавычки:
   `adb shell "dumpsys window | grep -E 'isKeyguardShowing'"`. Иначе конвейер выполнится на компьютере.
