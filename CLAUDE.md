@@ -50,7 +50,7 @@
   экземпляром `Adb` и пропускается, пока выполняется команда (`job_lock`).
 - Проверки: `python3 -m unittest discover -s tests -t .` и `python3 -m adbtoolkit --selftest`.
 - Сборка: `scripts/build-macos.sh` (PyInstaller → `dist/ADB Toolkit.app` и `.dmg`), в CI —
-  `.github/workflows/build-macos.yml` на `macos-latest` (arm64). Приложение не подписано: в README инструкция
+  `.github/workflows/build.yml` на `macos-latest` (arm64); на тег `v*` он создаёт релиз с обеими версиями: `.dmg` для Mac и `.zip` (`AdbToolkit.ps1` + `.bat`) для Windows. Приложение не подписано: в README инструкция
   для Gatekeeper.
 - Приложение из Finder получает короткий `PATH` без Homebrew, поэтому пути к adb / Java / bundletool перечислены явно.
   `/usr/bin/java` на Mac — заглушка без JDK, Java ищется через `/usr/libexec/java_home`.
