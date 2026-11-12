@@ -11,30 +11,72 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.13"
-      - name: Build .app and .dmg
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format and lints
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+      - name: Build .app and .dmg (Apple Silicon + Intel)
         run: scripts/build-macos.sh
-      - name: Pack the Windows version
-        # Windows-версия — PowerShell-скрипт с запуском через .bat, как в релизе v0.1.0
-        run: zip -j dist/AdbToolkit-Windows.zip AdbToolkit.ps1 AdbToolkit.bat
       - uses: actions/upload-artifact@v4
         with:
-          name: ADB-Toolkit
+          name: macos
+          path: dist/ADB-Toolkit-macOS.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests and lints
+        run: |
+          cargo test
+          cargo clippy --all-targets -- -D warnings
+      - name: Build .exe
+        run: cargo build --release
+      - name: Pack
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/win | Out-Null
+          Copy-Item target/release/adb-toolkit.exe "dist/win/ADB Toolkit.exe"
+          Compress-Archive -Path "dist/win/ADB Toolkit.exe" -DestinationPath dist/ADB-Toolkit-Windows.zip -Force
+          # прежняя версия на PowerShell — запасной вариант, пока Rust-сборка не проверена на Windows
+          Compress-Archive -Path legacy/windows-powershell/AdbToolkit.ps1, legacy/windows-powershell/AdbToolkit.bat -DestinationPath dist/AdbToolkit-Windows-PowerShell.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
           path: |
-            dist/ADB-Toolkit-macOS.dmg
-            dist/AdbToolkit-Windows.zip
+            dist/ADB-Toolkit-Windows.zip
+            dist/AdbToolkit-Windows-PowerShell.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
       - name: Create the release with both versions
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp dist/ADB-Toolkit-macOS.dmg "dist/ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg"
-          cp dist/AdbToolkit-Windows.zip "dist/AdbToolkit-Windows-$GITHUB_REF_NAME.zip"
-          gh release create "$GITHUB_REF_NAME" --title "ADB Toolkit $GITHUB_REF_NAME" --generate-notes \
-            "dist/ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg" "dist/AdbToolkit-Windows-$GITHUB_REF_NAME.zip"
+          cd dist
+          mv ADB-Toolkit-macOS.dmg "ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg"
+          mv ADB-Toolkit-Windows.zip "ADB-Toolkit-Windows-$GITHUB_REF_NAME.zip"
+          mv AdbToolkit-Windows-PowerShell.zip "AdbToolkit-Windows-PowerShell-$GITHUB_REF_NAME.zip"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ADB Toolkit $GITHUB_REF_NAME" --generate-notes \
+            "ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg" "ADB-Toolkit-Windows-$GITHUB_REF_NAME.zip" \
+            "AdbToolkit-Windows-PowerShell-$GITHUB_REF_NAME.zip"

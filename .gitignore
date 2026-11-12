@@ -1,7 +1,9 @@
+/target/
+/dist/
+/build/
 .venv/
 __pycache__/
-build/
-dist/
 *.spec
 platform-tools/
 bundletool*.jar
+.DS_Store

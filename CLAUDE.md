@@ -16,52 +16,52 @@
 
 ## Что уже есть
 
-Рабочая Windows-версия: [AdbToolkit.ps1](AdbToolkit.ps1) (PowerShell 5.1 + WinForms) и запуск через
-[AdbToolkit.bat](AdbToolkit.bat). Проверка без окна: `powershell -STA -File AdbToolkit.ps1 -SelfTest`.
+Одна программа на **Rust + egui (eframe 0.36)** для macOS и Windows; описание для пользователя в [README.md](README.md).
+Прежние версии: Python + Tkinter удалена, Windows-версия на PowerShell лежит в
+[legacy/windows-powershell/](legacy/windows-powershell) и пока ещё выкладывается в релиз запасным вариантом.
 
-Интерфейс:
-- сверху путь к `adb.exe` и выбор подключённого устройства, цветной статус (device / unauthorized / offline),
-  автообновление раз в 3 секунды;
-- слева кнопки команд по группам: у каждой название, краткое описание и сама команда серым шрифтом;
-- в начале раздела «Установка приложений» область для перетаскивания APK / OBB / AAB (`Get-DropPlan` решает по расширениям: AAB через bundletool,
-  APK через `adb install`, OBB копируются после установки; AAB вместе с APK не принимаются);
-- справа цветной журнал вывода, «Очистить» и «Копировать всё»;
-- снизу поле для своей команды `adb` к выбранному устройству.
+Код в `src/`:
+- `adb.rs` — запуск программ (`Adb::run`: таймаут, «Прервать» убивает процесс, опрос раз в 25 мс), `start_server`,
+  события для окна (`Event`, `Sink`): журнал, список устройств, шаги диагностики (`Step`), содержимое папки.
+- `commands.rs` — список `COMMANDS`, источник правды (группы `Group`, у команды icon / title / desc / cmd / kind,
+  `confirm`, `needs_device`, `platform`). `Kind::Job(fn(&mut Adb))` выполняется в рабочем потоке; остальные виды
+  (`PickInstall`, `PullByPath`, `PushToDownload`, `OpenMtpApp`, `OpenExplorer`) сначала собирают данные в окне.
+- `devices.rs` (`adb devices -l`), `files.rs` (`ls -la`, пути, `list_folder`), `install.rs` (`drop_plan`,
+  `install_planned`: AAB через bundletool, APK через `adb install -r -t`, OBB в `/sdcard/Android/obb/<пакет>/`),
+  `host.rs` (`system_profiler` на Mac; `Get-PnpDevice` / Проводник / `pnputil` через `powershell.exe` в Windows),
+  `tools.rs` (поиск adb / Java / bundletool, `app_dir`), `selftest.rs`.
+- `ui/` — окно: `mod.rs` (состояние, очередь событий, запуск работ, диалоги), `pages.rs` (разделы, диагностика с
+  чек-листом, зона перетаскивания, настройки), `files_view.rs` (файлы планшета), `console.rs` (журнал и своя
+  команда), `theme.rs` (палитры, шрифты), `widgets.rs`.
 
-Список команд лежит в массиве `$script:Commands` (поля Group, Title, Desc, Cmd, Run, необязательный Confirm).
-Это источник правды для переноса: группы «Быстрое решение» (авто-диагностика), «Подключение ADB», «Режим USB на
-планшете», «Экран и питание», «Информация о планшете», «Файлы через ADB», «Установка приложений» (APK: `adb install -r -t`; APK + OBB: установка и
-`adb push` в `/sdcard/Android/obb/<пакет>/`, пакет берётся из имени `main.<версия>.<пакет>.obb`; AAB: через `bundletool`
-`build-apks --connected-device` + `install-apks`, нужны Java и `bundletool.jar` рядом со скриптом).
+Интерфейс: слева меню разделов и карточка устройства (статус, выбор, если устройств несколько); в центре раздел;
+снизу журнал с «Прервать» и полем `adb …`. Файлы, брошенные в окно, ставятся (или отправляются в открытую папку
+в разделе «Файлы»). На Mac заголовок окна прозрачный, окно перетаскивается за верхнюю полосу (`title_drag_area`).
 
-## Версия для macOS (Python + Tkinter)
-
-Стек выбран: Python 3.10+ и Tkinter, перетаскивание через `tkinterdnd2` (без него зона установки работает по
-щелчку). Код в [adbtoolkit/](adbtoolkit), описание для пользователя в [README.md](README.md).
-
-- `core.py` — поиск adb / Java / bundletool, запуск программ (`Adb.run`: таймаут, прерывание), разбор
-  `adb devices -l` и `ls -la`, установка APK / OBB / AAB (`drop_plan`, `install_planned`). Без Tk.
-- `commands.py` — список команд `COMMANDS`, источник правды (как `$script:Commands`). У команды `run(adb, args)`
-  выполняется в рабочем потоке; диалоги (выбор файлов, вопросы) — только в `prepare(ui)` до запуска, в потоке их
-  вызывать нельзя. `action(ui)` — действие только в окне.
-- `macos.py` — `system_profiler SPUSBHostDataType` (старые macOS: `SPUSBDataType`) и поиск OpenMTP.
-- `gui.py` — окно; `filebrowser.py` — «Файлы планшета» через `adb shell ls -la` + pull / push.
-- Журнал и список устройств идут из потоков в окно через очередь. Фоновый опрос `adb devices` раз в 3 с идёт отдельным
-  экземпляром `Adb` и пропускается, пока выполняется команда (`job_lock`).
-- Проверки: `python3 -m unittest discover -s tests -t .` и `python3 -m adbtoolkit --selftest`.
-- Сборка: `scripts/build-macos.sh` (PyInstaller → `dist/ADB Toolkit.app` и `.dmg`), в CI —
-  `.github/workflows/build.yml` на `macos-latest` (arm64); на тег `v*` он создаёт релиз с обеими версиями: `.dmg` для Mac и `.zip` (`AdbToolkit.ps1` + `.bat`) для Windows. Приложение не подписано: в README инструкция
-  для Gatekeeper.
+- Работы идут в отдельном потоке по одной (`App::submit`); фоновый опрос `adb devices` раз в 3 с — отдельный
+  экземпляр `Adb`, пропускается, пока занят `job_lock`.
+- Диалоги выбора файлов — `rfd` (системные), вызываются только в потоке окна; вопросы с вводом — модальные окна egui
+  (`Prompt`).
+- Шрифт — Inter без символов Private Use Area (`assets/fonts/README.md`): в этой области значки Phosphor
+  (`egui-phosphor`), и символы Inter рисовались бы вместо них. Phosphor нельзя ставить перед Inter: он гасит строчную
+  латиницу. Моноширинный шрифт берётся из системы.
+- `egui-phosphor 0.14` требует egui 0.36, поэтому eframe не обновлён до 0.37.
+- Проверки: `cargo test`, `cargo run -- --selftest`, на устройстве `cargo test -- --ignored`;
+  `cargo clippy --all-targets -- -D warnings` и `cargo fmt --check` (CI их требует). Проверка, что код собирается под
+  Windows, с Mac: `cargo check --target x86_64-pc-windows-msvc`.
+- Сборка Mac: `scripts/build-macos.sh` (универсальный бинарник arm64 + x86_64, `.app` с подписью ad hoc и `.dmg`).
+  CI (`.github/workflows/build.yml`): macOS и Windows, на тег `v*` — релиз с `.dmg`, `.zip` с `ADB Toolkit.exe` и `.zip`
+  с PowerShell-версией. Значок: `scripts/make-icon.sh` → `assets/`.
 - Приложение из Finder получает короткий `PATH` без Homebrew, поэтому пути к adb / Java / bundletool перечислены явно.
   `/usr/bin/java` на Mac — заглушка без JDK, Java ищется через `/usr/libexec/java_home`.
-- Блок «Сторона Windows» в Python-версию не перенесён: на Windows пока работает `AdbToolkit.ps1`. Остальной код
-  кроссплатформенный (пути adb для Windows, `CREATE_NO_WINDOW`), но на Windows не проверялся.
-- Тексты интерфейса на русском; при правке команд меняйте их в обеих версиях, если команда общая.
+- Windows-часть (PnP, Проводник, `CREATE_NO_WINDOW`, значок через `build.rs` + `winresource`) только собирается в CI,
+  на настоящей Windows не проверялась.
+- Тексты интерфейса на русском.
 
 ## Технические грабли (уже наступили, не повторяй)
 
 - **`adb start-server` зависает при перехвате вывода.** Демон наследует каналы stdout/stderr, и чтение вывода
-  не завершается. Запускай сервер с перенаправлением в null (в Python-версии `start_server` с выводом в `DEVNULL`, в Windows-версии через
+  не завершается. Запускай сервер с перенаправлением в null (`adb::start_server` с `Stdio::null()`, в PowerShell-версии через
   `cmd /c ""adb" start-server >nul 2>&1"`) и только потом выполняй остальные команды adb.
 - **Команды с `|` и `grep` на устройстве передавай одним аргументом** в `adb shell "..."`, внутри одинарные кавычки:
   `adb shell "dumpsys window | grep -E 'isKeyguardShowing'"`. Иначе конвейер выполнится на компьютере.
@@ -73,7 +73,7 @@
   `dumpsys power | grep mWakefulness=`.
 - Не держи длинные команды (`pull`/`push`) в потоке интерфейса: интерфейс не должен зависать, у команд нужен
   таймаут и возможность прервать.
-- В PowerShell-версии после любой правки файла `AdbToolkit.ps1` нужен UTF-8 **с BOM**, иначе русский текст
+- В PowerShell-версии после любой правки файла `legacy/windows-powershell/AdbToolkit.ps1` нужен UTF-8 **с BOM**, иначе русский текст
   ломается в Windows PowerShell 5.1.
 - Серийник для `-s <serial>` берётся из первой колонки `adb devices -l`, а не из `model:`. Была ошибка:
   регулярное выражение для модели затирало `$Matches`, и вместо серийника подставлялась модель.
