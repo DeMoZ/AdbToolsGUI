@@ -1,0 +1,29 @@
+[package]
+name = "adb-toolkit"
+version = "0.3.0"
+edition = "2024"
+description = "Диагностика и «лечение» USB-подключения Android-устройств через ADB"
+repository = "https://github.com/DeMoZ/AdbToolsGUI"
+publish = false
+
+[dependencies]
+eframe = "0.36"
+egui-phosphor = "0.14"
+egui_extras = "0.36"
+regex = "1.13.1"
+rfd = "0.18.0"
+serde_json = "1.0.154"
+sha2 = "0.10"
+shlex = "2.0.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

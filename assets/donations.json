@@ -1,0 +1,33 @@
+{
+  "schema": 1,
+  "message": {
+    "en": "ADB Toolkit is free. If it helped you get your Android device working, you can support its development.",
+    "ru": "ADB Toolkit бесплатный. Если он помог подружить компьютер с Android-устройством, вы можете поддержать его развитие."
+  },
+  "methods": [
+    {
+      "id": "tribute",
+      "title": {
+        "en": "Card worldwide or USDT",
+        "ru": "Карта любой страны или USDT"
+      },
+      "description": {
+        "en": "Tribute. For payments from outside Russia: bank cards of any country, or USDT via @wallet in Telegram. Paying by card needs only an email, no Telegram.",
+        "ru": "Tribute. Для оплаты из-за рубежа: карты банков любой страны или USDT через @wallet в Telegram. Для оплаты картой нужен только email, Telegram не нужен."
+      },
+      "url": "https://web.tribute.tg/d/T3o"
+    },
+    {
+      "id": "cloudtips",
+      "title": {
+        "en": "Card or SBP (Russia)",
+        "ru": "Карта или СБП (Россия)"
+      },
+      "description": {
+        "en": "CloudTips by T-Bank. Russian bank cards, SBP, Apple Pay and Google Pay.",
+        "ru": "CloudTips от Т-Банка. Карты российских банков, СБП, Apple Pay и Google Pay."
+      },
+      "url": "https://pay.cloudtips.ru/p/902c7c74"
+    }
+  ]
+}

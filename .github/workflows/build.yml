@@ -1,5 +1,12 @@
 name: Build and release
 
+# Каждый PR и push в main собирают обе версии. Тег v* (версия должна совпадать с Cargo.toml) выпускает релиз:
+#   ADB-Toolkit-macOS-<тег>.dmg              — для людей (Apple Silicon)
+#   ADB-Toolkit-<версия>-macos-arm64.zip    — для обновления из программы на Mac
+#   ADB-Toolkit-<версия>-windows-x64.zip    — Windows: ADB Toolkit.exe (и для обновления из программы)
+#   AdbToolkit-Windows-PowerShell-<тег>.zip — прежняя версия на PowerShell
+# Описание релиза берётся из docs/releases/<тег>.md; программа показывает его в окне обновления.
+
 on:
   push:
     branches: [main]
@@ -11,30 +18,82 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.13"
-      - name: Build .app and .dmg
+          targets: aarch64-apple-darwin
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; print(json.load(sys.stdin)['packages'][0]['version'])")
+          [[ "v$version" == "$GITHUB_REF_NAME" ]] || { echo "::error::Tag $GITHUB_REF_NAME doesn't match Cargo.toml ($version)"; exit 1; }
+      - name: Format and lints
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+      - name: Build .app, .dmg and the update zip (Apple Silicon)
         run: scripts/build-macos.sh
-      - name: Pack the Windows version
-        # Windows-версия — PowerShell-скрипт с запуском через .bat, как в релизе v0.1.0
-        run: zip -j dist/AdbToolkit-Windows.zip AdbToolkit.ps1 AdbToolkit.bat
       - uses: actions/upload-artifact@v4
         with:
-          name: ADB-Toolkit
+          name: macos
           path: |
             dist/ADB-Toolkit-macOS.dmg
-            dist/AdbToolkit-Windows.zip
-      - name: Create the release with both versions
-        if: startsWith(github.ref, 'refs/tags/v')
+            dist/ADB-Toolkit-*-macos-arm64.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Tests and lints
+        run: |
+          cargo test
+          cargo clippy --all-targets -- -D warnings
+      - name: Build .exe
+        run: cargo build --release
+      - name: Pack
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          New-Item -ItemType Directory -Force dist/win | Out-Null
+          Copy-Item target/release/adb-toolkit.exe "dist/win/ADB Toolkit.exe"
+          Compress-Archive -Path "dist/win/ADB Toolkit.exe" -DestinationPath "dist/ADB-Toolkit-$version-windows-x64.zip" -Force
+          # прежняя версия на PowerShell — запасной вариант
+          Compress-Archive -Path legacy/windows-powershell/AdbToolkit.ps1, legacy/windows-powershell/AdbToolkit.bat -DestinationPath dist/AdbToolkit-Windows-PowerShell.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/ADB-Toolkit-*-windows-x64.zip
+            dist/AdbToolkit-Windows-PowerShell.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp dist/ADB-Toolkit-macOS.dmg "dist/ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg"
-          cp dist/AdbToolkit-Windows.zip "dist/AdbToolkit-Windows-$GITHUB_REF_NAME.zip"
-          gh release create "$GITHUB_REF_NAME" --title "ADB Toolkit $GITHUB_REF_NAME" --generate-notes \
-            "dist/ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg" "dist/AdbToolkit-Windows-$GITHUB_REF_NAME.zip"
+          notes=docs/releases/$GITHUB_REF_NAME.md
+          if [[ -f "$notes" ]]; then args=(--notes-file "../$notes"); else args=(--generate-notes); fi
+          cd dist
+          mv ADB-Toolkit-macOS.dmg "ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg"
+          mv AdbToolkit-Windows-PowerShell.zip "AdbToolkit-Windows-PowerShell-$GITHUB_REF_NAME.zip"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ADB Toolkit $GITHUB_REF_NAME" "${args[@]}" \
+            "ADB-Toolkit-macOS-$GITHUB_REF_NAME.dmg" ADB-Toolkit-*-macos-arm64.zip ADB-Toolkit-*-windows-x64.zip \
+            "AdbToolkit-Windows-PowerShell-$GITHUB_REF_NAME.zip"
