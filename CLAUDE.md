@@ -49,13 +49,23 @@
 - Проверки: `cargo test`, `cargo run -- --selftest`, на устройстве `cargo test -- --ignored`;
   `cargo clippy --all-targets -- -D warnings` и `cargo fmt --check` (CI их требует). Проверка, что код собирается под
   Windows, с Mac: `cargo check --target x86_64-pc-windows-msvc`.
-- Сборка Mac: `scripts/build-macos.sh` (универсальный бинарник arm64 + x86_64, `.app` с подписью ad hoc и `.dmg`).
-  CI (`.github/workflows/build.yml`): macOS и Windows, на тег `v*` — релиз с `.dmg`, `.zip` с `ADB Toolkit.exe` и `.zip`
+- Сборка Mac: `scripts/build-macos.sh` (arm64, `.app` с подписью ad hoc, `.dmg` и `…-macos-arm64.zip` для обновления).
+  CI (`.github/workflows/build.yml`): macOS и Windows, на тег `v*` — релиз с `.dmg`, архивами для обновления и `.zip`
   с PowerShell-версией. Значок: `scripts/make-icon.sh` → `assets/`.
 - Приложение из Finder получает короткий `PATH` без Homebrew, поэтому пути к adb / Java / bundletool перечислены явно.
   `/usr/bin/java` на Mac — заглушка без JDK, Java ищется через `/usr/libexec/java_home`.
 - Windows-часть (PnP, Проводник, `CREATE_NO_WINDOW`, значок через `build.rs` + `winresource`) только собирается в CI,
   на настоящей Windows не проверялась.
+- Донаты (`donations.rs`, `ui/extras.rs`): файл `adbtoolkit.json` из `DeMoZ/donations` (raw.githubusercontent →
+  jsDelivr → кэш → копия `assets/donations.json` внутри программы), формат schema 1 как в EnhanceCapCut / UniversalKM.
+  Ссылки меняются в репозитории donations, не здесь; копию в `assets/` держать такой же.
+- Обновления (`update.rs`): схема Windows-версии EnhanceCapCut (`AppUpdates`) на обеих системах — GitHub API
+  `releases/latest`, архив `…-macos-arm64.zip` (`ADB Toolkit.app`, упакован `ditto`) или `…-windows-x64.zip`
+  (`ADB Toolkit.exe`), проверка SHA-256 из поля `digest`, замена скриптом (bash / PowerShell + robocopy) после выхода,
+  перезапуск; при неудаче новая копия стартует с `--update-failed`. Sparkle не используется (Swift-фреймворк).
+  В сборке для разработки (`cargo run`) обновление выключено. Сеть — системный `curl` (`net.rs`).
+- Mac: только Apple Silicon, сборку для Intel не выпускаем.
+- Релиз: `version` в `Cargo.toml` + `docs/releases/v<версия>.md` + тег `v<версия>` (CI сверяет тег с версией).
 - Тексты интерфейса на русском.
 
 ## Технические грабли (уже наступили, не повторяй)

@@ -402,10 +402,19 @@ pub fn settings(app: &mut App, ui: &mut egui::Ui) {
                 let b = egui::Button::new(text).selected(selected).min_size(vec2(0.0, 30.0));
                 if ui.add(b).clicked() {
                     app.theme = pref;
+                    app.settings.theme = match pref {
+                        ThemePreference::Light => "light",
+                        ThemePreference::Dark => "dark",
+                        ThemePreference::System => "system",
+                    }
+                    .into();
+                    app.settings.save();
                 }
             }
         });
     });
+    ui.add_space(14.0);
+    full_card(ui, |ui| super::extras::settings_card(app, ui));
     ui.add_space(14.0);
     full_card(ui, |ui| {
         ui.label(RichText::new("О программе").font(semibold(15.0)).color(p.text));

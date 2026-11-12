@@ -19,6 +19,10 @@ APK / OBB / AAB перетаскиванием в окно.
 - **Файлы** — папки планшета через ADB: просмотр, скачивание, отправка (можно перетащить файлы в окно). Работает
   без MTP, поэтому на Mac это основной способ добраться до файлов.
 - **Установка приложений** — перетащите APK, APK + OBB или AAB: утилита сама решит, что с ними делать.
+- **Поддержать** — способы доната (ссылки берутся из [DeMoZ/donations](https://github.com/DeMoZ/donations), файл
+  `adbtoolkit.json`).
+- **Обновления** — «Настройки → Проверить обновления» и автоматическая проверка раз в сутки: новая версия скачивается
+  из релизов GitHub, сверяется с SHA-256, и программа перезапускается уже обновлённой.
 - **Журнал** снизу: цветной вывод всех команд, «Прервать» для долгих операций и поле для своей команды `adb`
   (стрелки ↑ / ↓ листают историю).
 
@@ -26,8 +30,9 @@ APK / OBB / AAB перетаскиванием в окно.
 
 Готовые сборки — на странице Releases:
 
-- `ADB-Toolkit-macOS-<версия>.dmg` — для Mac (Apple Silicon и Intel, macOS 11+);
-- `ADB-Toolkit-Windows-<версия>.zip` — для Windows 10 / 11: распакуйте и запустите `ADB Toolkit.exe`;
+- `ADB-Toolkit-macOS-<версия>.dmg` — для Mac с Apple Silicon (M1 и новее), macOS 11+; сборки для Intel нет;
+- `ADB-Toolkit-<версия>-windows-x64.zip` — для Windows 10 / 11: распакуйте и запустите `ADB Toolkit.exe`;
+- `ADB-Toolkit-<версия>-macos-arm64.zip` — тот же Mac-вариант для обновления из программы;
 - `AdbToolkit-Windows-PowerShell-<версия>.zip` — прежняя Windows-версия на PowerShell (запасной вариант).
 
 Приложение не подписано сертификатом разработчика:
@@ -100,14 +105,15 @@ cargo run -- --selftest
 cargo test -- --ignored
 ```
 
-Сборка `.app` и `.dmg` для Mac (Apple Silicon + Intel):
+Сборка `.app`, `.dmg` и архива обновления для Mac (Apple Silicon):
 
 ```bash
 scripts/build-macos.sh
 ```
 
 Результат в `dist/`. GitHub Actions ([`build.yml`](.github/workflows/build.yml)) собирает обе версии на каждый PR и
-push в `main`; на тег `v*` создаётся релиз с `.dmg` для Mac и `.zip` для Windows.
+push в `main`. Релиз: поднимите `version` в `Cargo.toml`, напишите `docs/releases/v<версия>.md` (его текст покажет окно
+обновления) и запушьте тег `v<версия>`: CI проверит, что тег совпадает с версией, и выложит все файлы.
 
 Значок перерисовывается скриптом `scripts/make-icon.sh` (нужна macOS).
 
@@ -121,4 +127,6 @@ push в `main`; на тег `v*` создаётся релиз с `.dmg` для 
 | `src/install.rs` | APK / OBB / AAB: что ставить и как |
 | `src/host.rs` | что видит компьютер: `system_profiler` (Mac), PnP и Проводник (Windows) |
 | `src/tools.rs` | поиск adb, Java и bundletool |
+| `src/donations.rs`, `src/update.rs`, `src/net.rs` | донаты, обновление из релизов GitHub, сеть через `curl` |
+| `src/settings.rs` | настройки между запусками (тема, автопроверка обновлений) |
 | `src/ui/` | окно: тема, боковое меню, разделы, файлы, журнал |

@@ -13,6 +13,7 @@ egui_extras = "0.36"
 regex = "1.13.1"
 rfd = "0.18.0"
 serde_json = "1.0.154"
+sha2 = "0.10"
 shlex = "2.0.1"
 
 [target.'cfg(windows)'.dependencies]

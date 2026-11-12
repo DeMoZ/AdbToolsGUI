@@ -5,6 +5,7 @@
 //! экземпляром `Adb` и пропускается, пока выполняется команда (`job_lock`).
 
 mod console;
+mod extras;
 mod files_view;
 mod pages;
 mod theme;
@@ -55,6 +56,7 @@ pub fn run() -> eframe::Result {
 pub enum Section {
     Group(Group),
     Settings,
+    Donate,
 }
 
 /// Что сделать в окне после окончания работы.
@@ -79,6 +81,10 @@ struct Running {
 }
 
 pub struct App {
+    ctx: egui::Context,
+    settings: crate::settings::Settings,
+    donate: extras::DonateState,
+    updates: extras::UpdateState,
     sink: Sink,
     rx: mpsc::Receiver<Event>,
     adb: Adb,
@@ -121,7 +127,17 @@ impl App {
             let _ = tx.send(e);
             repaint.request_repaint();
         });
+        let settings = crate::settings::Settings::load();
+        let theme = match settings.theme.as_str() {
+            "light" => ThemePreference::Light,
+            "dark" => ThemePreference::Dark,
+            _ => ThemePreference::System,
+        };
         let mut app = App {
+            ctx: ctx.clone(),
+            settings,
+            donate: Default::default(),
+            updates: Default::default(),
             adb: Adb::new(sink.clone()),
             poller: Adb::new(sink.clone()),
             sink,
@@ -132,7 +148,7 @@ impl App {
             bundletool: None,
             tools_cache: None,
             auto_refresh: true,
-            theme: ThemePreference::System,
+            theme,
             devices: vec![],
             dev_sig: None,
             serial: None,
@@ -165,6 +181,13 @@ impl App {
             ),
         }
         app.log("Выберите устройство и нужное действие. Начните с «Авто-диагностики».", Tag::Dim);
+        if std::env::args().any(|a| a == "--update-failed") {
+            app.log(
+                "Обновление не установлено: не удалось заменить файлы программы. Проверьте обновления ещё раз.",
+                Tag::Err,
+            );
+        }
+        extras::check_on_start(&mut app);
         app
     }
 
@@ -209,6 +232,12 @@ impl App {
                 Event::Check(step, tag, text) => self.checks[step.index()].push((tag, text)),
                 Event::Folder(result) => self.files.loaded(result, &mut self.log),
                 Event::Done => self.job_done(),
+                Event::Donations(info) => extras::donations_loaded(self, info),
+                Event::UpdateChecked(result) => extras::checked(self, result),
+                Event::UpdateDownloaded(result) => {
+                    let ctx = self.ctx.clone();
+                    extras::downloaded(self, &ctx, result)
+                }
             }
         }
     }
@@ -606,11 +635,28 @@ impl App {
             if nav_item(ui, icon::GEAR_SIX, "Настройки", self.section == Section::Settings, None).clicked() {
                 self.section = Section::Settings;
             }
+            if widgets::nav_item_tinted(
+                ui,
+                icon::HEART,
+                "Поддержать",
+                self.section == Section::Donate,
+                p.pink,
+                p.pink_soft,
+            )
+            .clicked()
+            {
+                self.open_section(Section::Donate);
+            }
+            ui.add_space(12.0);
+            extras::sidebar_banner(self, ui);
         });
     }
 
     fn open_section(&mut self, s: Section) {
         self.section = s;
+        if s == Section::Donate {
+            extras::refresh_donations(self);
+        }
         if s == Section::Group(Group::Files) && self.files.loaded_serial != self.serial {
             let folder = self.files.folder.clone();
             self.load_folder(folder);
@@ -708,7 +754,8 @@ impl App {
     fn header(&self, ui: &mut egui::Ui, icon: &str, title: &str, subtitle: &str) {
         let p = palette(ui);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(icon).size(26.0).color(p.accent));
+            let color = if self.section == Section::Donate { p.pink } else { p.accent };
+            ui.label(RichText::new(icon).size(26.0).color(color));
             ui.add_space(2.0);
             ui.label(RichText::new(title).font(semibold(24.0)).color(p.text));
         });
@@ -911,12 +958,24 @@ impl eframe::App for App {
                             );
                             pages::settings(self, ui);
                         }
+                        Section::Donate => {
+                            self.header(
+                                ui,
+                                icon::HEART,
+                                "Поддержать ADB Toolkit",
+                                "Программа бесплатная. Нажмите на способ — откроется страница оплаты в браузере.",
+                            );
+                            extras::donate_page(self, ui);
+                        }
                     }
                     ui.add_space(16.0);
                 });
             });
         self.drop_overlay(ui, central.response.rect);
         self.prompts(&ctx);
+        if self.prompt.is_none() {
+            extras::offer_modal(self, &ctx);
+        }
         ctx.set_theme(self.theme);
     }
 }

@@ -169,3 +169,27 @@ pub fn separator(ui: &mut Ui) {
     ui.painter().rect_filled(rect, 0.0, p.card_stroke);
     ui.add_space(6.0);
 }
+
+/// Пункт меню своего цвета (например, розовый «Поддержать»).
+pub fn nav_item_tinted(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    color: Color32,
+    soft: Color32,
+) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+    let bg = if selected || resp.hovered() { soft } else { Color32::TRANSPARENT };
+    ui.painter().rect_filled(rect, CornerRadius::same(RADIUS), bg);
+    let painter = ui.painter();
+    painter.text(
+        rect.left_center() + vec2(12.0, 0.0),
+        Align2::LEFT_CENTER,
+        icon,
+        egui::FontId::proportional(16.0),
+        color,
+    );
+    painter.text(rect.left_center() + vec2(38.0, 0.0), Align2::LEFT_CENTER, label, semibold(13.5), color);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}

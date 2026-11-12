@@ -50,6 +50,11 @@ pub enum Event {
     /// Содержимое папки планшета для окна файлов.
     Folder(Listing),
     Done,
+    /// Свежий файл донатов; None — не загрузился.
+    Donations(Option<crate::donations::Info>),
+    UpdateChecked(Result<Option<crate::update::Release>, String>),
+    /// Распакованная новая версия или ошибка загрузки.
+    UpdateDownloaded(Result<std::path::PathBuf, String>),
 }
 
 #[derive(Clone)]

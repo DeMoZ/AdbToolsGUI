@@ -5,12 +5,16 @@
 mod adb;
 mod commands;
 mod devices;
+mod donations;
 mod files;
 mod host;
 mod install;
+mod net;
 mod selftest;
+mod settings;
 mod tools;
 mod ui;
+mod update;
 
 fn main() -> eframe::Result {
     if std::env::args().any(|a| a == "--selftest") {

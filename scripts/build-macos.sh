@@ -1,21 +1,20 @@
 #!/bin/bash
-# Собирает dist/ADB Toolkit.app (Apple Silicon + Intel) и dist/ADB-Toolkit-macOS.dmg. Запуск: scripts/build-macos.sh
+# Собирает dist/ADB Toolkit.app (Apple Silicon), dist/ADB-Toolkit-macOS.dmg и архив для обновления
+# dist/ADB-Toolkit-<версия>-macos-arm64.zip. Запуск: scripts/build-macos.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-targets=(aarch64-apple-darwin x86_64-apple-darwin)
-rustup target add "${targets[@]}" >/dev/null
+# только Apple Silicon: сборку для Intel не выпускаем
+target=aarch64-apple-darwin
+rustup target add "$target" >/dev/null
 cargo test --quiet
-for t in "${targets[@]}"; do
-  cargo build --release --target "$t"
-done
+cargo build --release --target "$target"
 
 version=$(cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; print(json.load(sys.stdin)['packages'][0]['version'])")
 app="dist/ADB Toolkit.app"
-rm -rf "$app" dist/ADB-Toolkit-macOS.dmg
+rm -rf "$app" dist/ADB-Toolkit-macOS.dmg dist/ADB-Toolkit-*-macos-arm64.zip
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-lipo -create -output "$app/Contents/MacOS/adb-toolkit" \
-  target/aarch64-apple-darwin/release/adb-toolkit target/x86_64-apple-darwin/release/adb-toolkit
+cp "target/$target/release/adb-toolkit" "$app/Contents/MacOS/adb-toolkit"
 cp assets/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,10 +38,12 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 # подпись «ad hoc»: без неё Apple Silicon не запустит скачанный бинарник даже после снятия карантина
 codesign --force --deep --sign - "$app"
+# архив для обновления из программы: ditto сохраняет подпись и атрибуты .app
+ditto -c -k --keepParent "$app" "dist/ADB-Toolkit-$version-macos-arm64.zip"
 
 staging=$(mktemp -d)
 cp -R "$app" "$staging/"
 ln -s /Applications "$staging/Applications"
 hdiutil create -quiet -volname "ADB Toolkit" -srcfolder "$staging" -ov -format UDZO dist/ADB-Toolkit-macOS.dmg
 rm -rf "$staging"
-echo "Готово: $app, dist/ADB-Toolkit-macOS.dmg"
+echo "Готово: $app, dist/ADB-Toolkit-macOS.dmg, dist/ADB-Toolkit-$version-macos-arm64.zip"
